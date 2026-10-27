@@ -1,0 +1,1 @@
+{"id":"REG-USER-ID","tool":"get_claim_history","args":{"user_id":"POL-1842"},"expect_kind":"param","expect_code":"PARAM_USER_ID"}

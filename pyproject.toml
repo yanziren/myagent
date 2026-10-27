@@ -7,7 +7,15 @@ name = "claimdesk"
 version = "0.0.0"
 description = "安澜财险核赔台"
 requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic>=2.0",
+    "httpx>=0.27",
+    "rank-bm25>=0.2",
+    "uvicorn>=0.32",
+    "langgraph>=0.2",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["claimdesk*"]
+include = ["claimdesk*", "auditdesk*"]

@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>合同审核台</title>
+  <style>
+    :root {
+      --paper: #f3efe6;
+      --ink: #1c1915;
+      --line: #d9d0c1;
+      --pass: #1f6b4a;
+      --need: #8a5a12;
+      --review: #8c3a2f;
+      --panel: #fffdf8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: 16px/1.5 "Iowan Old Style", "Palatino Linotype", "Songti SC", serif;
+    }
+    header, main { max-width: 1080px; margin: 0 auto; padding: 28px 20px; }
+    header { padding-bottom: 0; }
+    .eyebrow { letter-spacing: 0.12em; font-size: 13px; margin: 0 0 6px; }
+    h1 { font-size: 36px; font-weight: 600; margin: 0 0 8px; }
+    header p { margin: 0; max-width: 40em; }
+    .legend { display: flex; gap: 16px; padding: 0; margin: 14px 0 0; list-style: none; font-size: 14px; }
+    .legend li { border-bottom: 2px solid var(--line); padding-bottom: 2px; }
+    main { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 20px; }
+    section { background: var(--panel); border: 1px solid var(--line); padding: 16px; }
+    h2 { font-size: 18px; margin: 0 0 12px; }
+    .samples { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    button, input {
+      font: inherit;
+      color: var(--ink);
+      background: transparent;
+      border: 1px solid var(--ink);
+      padding: 6px 10px;
+    }
+    button { cursor: pointer; }
+    button:hover { background: #efe8da; }
+    textarea { width: 100%; min-height: 420px; border: 1px solid var(--line); padding: 10px; font: 14px/1.45 ui-monospace, "SF Mono", Menlo, monospace; background: #fff; }
+    .row { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+    label { font-size: 14px; }
+    input[type="text"], input[type="number"] { background: #fff; min-width: 8em; }
+    #badge { display: inline-block; padding: 4px 10px; color: white; font-size: 20px; margin: 0; }
+    #badge.pass { background: var(--pass); }
+    #badge.need_docs { background: var(--need); }
+    #badge.review { background: var(--review); }
+    #findings { padding-left: 18px; }
+    #findings li { margin: 8px 0; }
+    .quote { display: block; color: #5c564c; font-size: 14px; }
+    #action-msg, #trace { font-size: 14px; }
+    #action-msg.error { color: var(--review); }
+    @media (max-width: 800px) {
+      main { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="eyebrow">服务合同</p>
+    <h1>合同审核台</h1>
+    <p>系统只出建议。通过、补材料、人工复核都带着规则号。出具正式意见和发给对方，必须另一个人点头。</p>
+    <ul class="legend">
+      <li>通过</li>
+      <li>补材料</li>
+      <li>人工复核</li>
+    </ul>
+  </header>
+  <main>
+    <section>
+      <h2>合同正文</h2>
+      <div class="samples" id="samples"></div>
+      <textarea id="contract" placeholder="把合同贴在这里"></textarea>
+      <div class="row">
+        <label>审核人 <input id="actor" type="text" value="林晓"></label>
+        <label>复核金额线 <input id="threshold" type="number" value="50000" min="1"></label>
+        <button id="run" type="button">审核</button>
+      </div>
+    </section>
+    <section>
+      <h2>建议</h2>
+      <p id="badge" hidden></p>
+      <p id="rationale"></p>
+      <ol id="findings"></ol>
+      <p id="trace"></p>
+      <div class="row">
+        <label>审批人 <input id="approver" type="text" placeholder="另一个人的名字"></label>
+      </div>
+      <div class="row">
+        <button type="button" data-action="draft_note">记下草稿</button>
+        <button type="button" data-action="issue_formal">出具正式意见</button>
+        <button type="button" data-action="send_counterparty">发给对方</button>
+        <button type="button" id="replay">回放这条</button>
+      </div>
+      <p id="action-msg"></p>
+    </section>
+  </main>
+  <script>
+    const labels = { pass: "通过", need_docs: "补材料", review: "人工复核" };
+    const ruleNames = {
+      "R-ELIGIBLE": "条款齐全",
+      "R-MISSING-PARTY": "缺少甲方或乙方",
+      "R-MISSING-AMOUNT": "没有写明金额",
+      "R-MISSING-SIGN": "没有签字或盖章",
+      "R-MISSING-ATTACHMENT": "提到附件但没有附上",
+      "R-MISSING-PAYMENT": "没有付款约定",
+      "R-MISSING-SCOPE": "没有服务或交付内容",
+      "R-MISSING-LIABILITY": "没有违约责任",
+      "R-MISSING-CONFIDENTIAL": "没有保密条款",
+      "R-MISSING-DISPUTE": "没有争议解决",
+      "R-MISSING-TERM": "没有有效期",
+      "R-AMOUNT-REVIEW": "金额达到复核线",
+      "R-LIABILITY-UNCAPPED": "责任不封顶",
+      "R-DISPUTE-CONFLICT": "法院和仲裁写在一起",
+      "R-TERM-CONFLICT": "有效期互相矛盾",
+      "R-AMOUNT-CONFLICT": "金额互相矛盾"
+    };
+    let traceId = "";
+
+    function show(data) {
+      traceId = data.trace_id || traceId;
+      const badge = document.getElementById("badge");
+      badge.hidden = false;
+      badge.className = data.decision;
+      badge.textContent = labels[data.decision] || data.decision;
+      document.getElementById("rationale").textContent = data.rationale || "";
+      const list = document.getElementById("findings");
+      list.replaceChildren();
+      (data.findings || []).forEach((finding) => {
+        const item = document.createElement("li");
+        const name = ruleNames[finding.rule_id] || finding.rule_id;
+        item.append(document.createTextNode(finding.rule_id + " " + name));
+        if (finding.quote) {
+          const quote = document.createElement("span");
+          quote.className = "quote";
+          quote.textContent = finding.quote;
+          item.append(quote);
+        }
+        list.append(item);
+      });
+      const actions = (data.actions || []).map((row) => row.status + " " + row.action).join("，");
+      document.getElementById("trace").textContent =
+        "记录 " + traceId + (actions ? "。动作：" + actions : "");
+    }
+
+    async function loadSamples() {
+      const response = await fetch("/samples");
+      const items = await response.json();
+      const box = document.getElementById("samples");
+      items.forEach((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = item.title;
+        button.addEventListener("click", () => {
+          document.getElementById("contract").value = item.text;
+        });
+        box.append(button);
+      });
+    }
+
+    document.getElementById("run").addEventListener("click", async () => {
+      const response = await fetch("/reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contract_text: document.getElementById("contract").value,
+          actor_id: document.getElementById("actor").value,
+          amount_review_from: Number(document.getElementById("threshold").value || 50000)
+        })
+      });
+      const data = await response.json();
+      const msg = document.getElementById("action-msg");
+      if (!response.ok) {
+        msg.className = "error";
+        msg.textContent = data.detail || "审核没有完成";
+        return;
+      }
+      msg.className = "";
+      msg.textContent = "";
+      show(data);
+    });
+
+    document.querySelectorAll("[data-action]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const msg = document.getElementById("action-msg");
+        if (!traceId) {
+          msg.className = "error";
+          msg.textContent = "先审核一份合同";
+          return;
+        }
+        const response = await fetch("/traces/" + traceId + "/actions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: button.dataset.action,
+            actor_id: document.getElementById("actor").value,
+            approver_id: document.getElementById("approver").value
+          })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          msg.className = "error";
+          msg.textContent = data.detail || "这个动作没有记下";
+          return;
+        }
+        msg.className = "";
+        msg.textContent = "已记下：" + data.action;
+      });
+    });
+
+    document.getElementById("replay").addEventListener("click", async () => {
+      const msg = document.getElementById("action-msg");
+      if (!traceId) {
+        msg.className = "error";
+        msg.textContent = "还没有可回放的记录";
+        return;
+      }
+      const response = await fetch("/traces/" + traceId);
+      const data = await response.json();
+      if (!response.ok) {
+        msg.className = "error";
+        msg.textContent = data.detail || "回放失败";
+        return;
+      }
+      document.getElementById("contract").value = data.contract_text;
+      show(data);
+      msg.className = "";
+      msg.textContent = "已按记录回放";
+    });
+
+    loadSamples();
+  </script>
+</body>
+</html>
